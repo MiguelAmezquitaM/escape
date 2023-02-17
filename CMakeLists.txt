@@ -8,6 +8,7 @@ add_executable(
 
     # files
     src/main.cpp
+    src/window.cpp
 )
 
 add_subdirectory(lib/glfw)
