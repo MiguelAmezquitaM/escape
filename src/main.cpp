@@ -5,280 +5,224 @@
 #include <algorithm>
 #include <iostream>
 
-template <typename T>
-constexpr int length(T &&e)
+using Dimention = glm::vec2;
+using Point = glm::vec2;
+using Color = glm::ivec3;
+
+constexpr Color White = {191, 201, 202};
+constexpr Color Black = {8, 7, 14};
+constexpr Color Dark = {23, 32, 42};
+constexpr Color Pink = {231, 76, 60};
+constexpr Color Orange = {211, 84, 0};
+constexpr Color Gray = {189, 195, 199};
+constexpr Color Green = {20, 143, 119};
+
+struct Rectangle
 {
-    return sizeof(e) / sizeof(e[0]);
+    constexpr bool Contains(Point point) const noexcept;
+    constexpr bool Collides(Rectangle other) const noexcept;
+
+    Color color;
+    Point position;
+    Dimention dimention;
+};
+
+template <unsigned N>
+constexpr void DrawRectangles(Rectangle const (&rectangles)[N]);
+
+struct Player
+{
+    Rectangle *rectangle = nullptr;
+    bool isSelected = false;
+};
+
+struct Scene
+{
+    Scene();
+
+    Rectangle rectangles[9];
+
+    Player player;
+
+    Rectangle &getGameArea();
+
+    template <typename Fun>
+    void ForRectangles(Fun &&fun);
+
+    friend void HandleDragPlayer(Scene *scene, double MouseX, double MouseY);
+
+    friend void HandlePressPlayer(Scene *scene);
+
+    friend void HandleReleasePlayer(Scene *scene);
+};
+
+Scene *currentScene{};
+
+void CursorPosCallback(GLFWwindow *, double x, double y);
+
+void MouseButtonCallback(GLFWwindow *, int button, int action, int mods);
+
+void gotoxy(int x, int y)
+{
+    printf("%c[%d;%df", 0x1B, y, x);
 }
-
-constexpr int width = 800;
-constexpr int height = 800;
-constexpr float aspect = float(width) / height;
-
-void draw_map();
-
-void draw_rectangles();
-
-void move_rectangles(float dt);
-
-void process_input();
-
-void game_rules();
 
 int main()
 {
     glfwInit();
+    GLFWwindow *window = glfwCreateWindow(900, 900, "Escape!", nullptr, nullptr);
+    glfwMakeContextCurrent(window);
 
-    auto win = glfwCreateWindow(width, height, "Escape!", nullptr, nullptr);
+    Scene scene{};
 
-    glfwMakeContextCurrent(win);
+    currentScene = &scene;
 
     gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
 
-    double past_time = glfwGetTime();
-    double start_time = glfwGetTime();
+    // Screen coords
+    glOrtho(0.0, 900.0, 900.0, 0.0, -1.0, 1.0);
 
-    while (!glfwWindowShouldClose(win))
+    glfwSetCursorPosCallback(window, CursorPosCallback);
+
+    glfwSetMouseButtonCallback(window, MouseButtonCallback);
+#if _WIN32
+    system("cls");
+#else 
+    system("clear");
+#endif
+
+    while (!glfwWindowShouldClose(window))
     {
         glClear(GL_COLOR_BUFFER_BIT);
+        // Begin draw
+        DrawRectangles(scene.rectangles);
+        // End draw
+        glfwSwapBuffers(window);
 
-        draw_map();
-
-        draw_rectangles();
-
-        move_rectangles(glfwGetTime() - past_time);
-        past_time = glfwGetTime();
-
-        process_input();
-
-        game_rules();
-
-        glfwSwapBuffers(win);
         glfwPollEvents();
+
+        int i = 0;
+
+        scene.ForRectangles(
+            [&](Rectangle &rect)
+            {
+                gotoxy(0, i + 1);
+                std::cout << "Rectangle #" << i << ": ";
+                if (scene.player.rectangle->Collides(rect))
+                {
+                    std::cout << "Collide\n";
+                }
+                else
+                {
+                    std::cout << "       \n";
+                }
+                i++;
+            });
     }
 
-    double end_time = glfwGetTime();
-
-    std::cout << "Tu duracion: " << end_time - start_time << " segundos\n";
-
-    glfwDestroyWindow(win);
-
+    glfwDestroyWindow(window);
     glfwTerminate();
-
     return 0;
 }
 
-glm::vec2 screen2world(glm::vec2 P)
+constexpr bool Rectangle::Contains(Point point) const noexcept
 {
-    return {
-        P.x / width * 2.0f - 1.0f,
-        (height - P.y) / height * 2.0f - 1.0f};
+    Dimention distance = position - point;
+    return 0.0f <= distance.x && distance.x <= dimention.x && 0.0f <= distance.y && distance.y <= dimention.y;
 }
 
-struct map
+constexpr bool Rectangle::Collides(Rectangle other) const noexcept
 {
-    glm::vec2 dimension;
-    glm::vec2 center;
-    glm::vec3 color;
+    Dimention distance = position - other.position;
+    return -dimention.x <= distance.x && distance.x <= other.dimention.x && -dimention.y <= distance.y && distance.y <= other.dimention.y;
+}
 
-    bool contains(glm::vec2 p)
-    {
-        return (
-            center.x - dimension.x / 2.0f < p.x && p.x < center.x + dimension.x / 2.0f &&
-            center.y - dimension.y / 2.0f < p.y && p.y < center.y + dimension.y / 2.0f);
-    }
-
-    glm::vec2 get_limits_x()
-    {
-        return {center.x - dimension.x / 2.0f, center.x + dimension.x / 2.0f};
-    }
-
-    glm::vec2 get_limits_y()
-    {
-        return {center.y - dimension.y / 2.0f, center.y + dimension.y / 2.0f};
-    }
-};
-
-map maps[]{
-    {{1.8f, 1.8f},
-     {0.0f, 0.0f},
-     {0.1f, 0.1f, 0.15f}},
-    {{1.5f, 1.5f},
-     {0.0f, 0.0f},
-     {0.2f, 0.2f, 0.3f}}};
-
-void draw_rectangle(glm::vec2 center, glm::vec2 dims, glm::vec3 color)
+template <unsigned N>
+constexpr void DrawRectangles(Rectangle const (&rectangles)[N])
 {
-    glColor3fv(&color.x);
-
-    float xh = center.x + dims.x / 2.0f;
-    float xl = center.x - dims.x / 2.0f;
-    float yh = center.y + dims.y / 2.0f;
-    float yl = center.y - dims.y / 2.0f;
     glBegin(GL_QUADS);
-
-    glVertex2f(xh, yh);
-    glVertex2f(xl, yh);
-    glVertex2f(xl, yl);
-    glVertex2f(xh, yl);
+    for (Rectangle const &rectangle : rectangles)
+    {
+        float LX = rectangle.position.x;
+        float LY = rectangle.position.y;
+        float RX = rectangle.position.x + rectangle.dimention.x;
+        float RY = rectangle.position.y + rectangle.dimention.y;
+        glColor3ub(rectangle.color.r, rectangle.color.g, rectangle.color.b);
+        glVertex2f(LX, LY);
+        glVertex2f(RX, LY);
+        glVertex2f(RX, RY);
+        glVertex2f(LX, RY);
+    }
     glEnd();
 }
 
-void draw_map()
+void HandleDragPlayer(Scene *scene, double MouseX, double MouseY)
 {
-    for (auto p : maps)
+    Player &player = scene->player;
+    Dimention &playerSize = player.rectangle->dimention;
+
+    if (player.isSelected)
     {
-        draw_rectangle(p.center, p.dimension, p.color);
+        player.rectangle->position = {MouseX - playerSize.x / 2.0f, MouseY - playerSize.y / 2.0f};
     }
 }
 
-struct rectangle
+void HandlePressPlayer(Scene *scene)
 {
-    glm::vec3 color;
-    glm::vec2 position;
-    glm::vec2 dimention;
-    glm::vec2 velocity;
-
-    bool contains(glm::vec2 p)
-    {
-        return (
-            position.x - dimention.x / 2.0f < p.x && p.x < position.x + dimention.x / 2.0f &&
-            position.y - dimention.y / 2.0f < p.y && p.y < position.y + dimention.y / 2.0f);
-    }
-
-    float maxX()
-    {
-        return position.x + dimention.x / 2.0f;
-    }
-
-    float minX()
-    {
-        return position.x - dimention.x / 2.0f;
-    }
-
-    float maxY()
-    {
-        return position.y + dimention.y / 2.0f;
-    }
-
-    float minY()
-    {
-        return position.y - dimention.y / 2.0f;
-    }
-};
-
-rectangle rectangles[]{
-    {
-        {0.8, 0.9, 0.7},
-        {0.3, 0.32},
-        {0.3, 0.1},
-        {-100.0, -50.0},
-    },
-    {
-        {0.8, 0.9, 0.7},
-        {-0.4, 0.5},
-        {0.25, 0.25},
-        {60.0, -65.0},
-    },
-    {
-        {0.8, 0.9, 0.7},
-        {-0.4, -0.5},
-        {0.2, 0.3},
-        {75.0, 85.0},
-    },
-    {
-        {0.8, 0.9, 0.7},
-        {0.4, -0.6},
-        {0.3, 0.15},
-        {-110.0, 95.0},
-    },
-    {
-        {1.0, 1.0, 1.0},
-        {0.0, 0.0},
-        {0.15, 0.15},
-        {0.0, 0.0},
-    }};
-
-void draw_rectangles()
-{
-    for (auto rect : rectangles)
-    {
-        draw_rectangle(rect.position, rect.dimention, rect.color);
-    }
+    scene->player.isSelected = true;
 }
 
-void move_rectangles(float dt)
+void HandleReleasePlayer(Scene *scene)
 {
-    auto wall = maps[0];
-    auto xLimits = wall.get_limits_x();
-    auto yLimits = wall.get_limits_y();
-
-    for (auto &rect : rectangles)
-    {
-        rect.position += (rect.velocity / glm::vec2(width, height)) * (dt * 2.5f);
-
-        if (rect.minX() < xLimits.x || rect.maxX() > xLimits.y)
-            rect.velocity.x = -rect.velocity.x;
-
-        if (rect.minY() < yLimits.x || rect.maxY() > yLimits.y)
-            rect.velocity.y = -rect.velocity.y;
-    }
+    scene->player.isSelected = false;
 }
 
-void process_input()
+void CursorPosCallback(GLFWwindow *, double x, double y)
 {
-    static bool isMoving = false;
+    HandleDragPlayer(currentScene, x, y);
+}
 
-    auto win = glfwGetCurrentContext();
-
-    auto pressed = glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_1);
-
-    if (!pressed)
+void MouseButtonCallback(GLFWwindow *, int button, int action, int mods)
+{
+    if (button == GLFW_MOUSE_BUTTON_LEFT)
     {
-        isMoving = false;
-        return;
-    }
-
-    double x, y;
-
-    glfwGetCursorPos(win, &x, &y);
-
-    auto &player = rectangles[length(rectangles) - 1];
-
-    glm::vec2 cursorPos = screen2world({x, y});
-
-    if (!isMoving)
-    {
-        if (player.contains(cursorPos))
+        if (action == GLFW_PRESS)
         {
-            isMoving = true;
+            HandlePressPlayer(currentScene);
+        }
+
+        if (action == GLFW_RELEASE)
+        {
+            HandleReleasePlayer(currentScene);
         }
     }
-
-    if (!isMoving)
-        return;
-
-    auto limits = maps[1].dimension * 0.5f;
-
-    player.position = glm::vec2(
-        std::clamp(cursorPos.x, -limits.x, limits.x),
-        std::clamp(cursorPos.y, -limits.y, limits.y));
 }
 
-void game_rules()
+Scene::Scene()
+    : rectangles{
+          {.color = Dark, .position = {0.0f, 0.0f}, .dimention = {900.0f, 900.0f}},
+          {.color = White, .position = {50.0f, 50.0f}, .dimention = {800.0f, 800.0f}},
+          {.color = Black, .position = {100.0f, 100.0f}, .dimention = {700.0f, 700.0f}},
+          {.color = Orange, .position = {200.0f, 150.0f}, .dimention = {90.0f, 120.0f}},
+          {.color = Orange, .position = {180.0f, 350.0f}, .dimention = {85.0f, 180.0f}},
+          {.color = Orange, .position = {550.0f, 150.0f}, .dimention = {120.0f, 120.0f}},
+          {.color = Orange, .position = {320.0f, 620.0f}, .dimention = {110.0f, 110.0f}},
+          {.color = Orange, .position = {580.0f, 620.0f}, .dimention = {140.0f, 120.0f}},
+          {.color = Green, .position = {400.0f, 400.0f}, .dimention = {100.0f, 100.0f}}}
 {
-    auto &player = rectangles[length(rectangles) - 1];
+    player.rectangle = &rectangles[8];
+}
 
-    for (auto &rect : rectangles)
+Rectangle &Scene::getGameArea()
+{
+    return rectangles[2];
+}
+
+template <typename Fun>
+void Scene::ForRectangles(Fun &&fun)
+{
+    for (int i = 3; i < 8; i++)
     {
-        if (&rect == &player)
-            continue;
-
-        if (
-            std::fabs(player.minX() - rect.minX()) < std::min(rect.dimention.x, player.dimention.x) &&
-            std::fabs(player.minY() - rect.minY()) < std::min(rect.dimention.y, player.dimention.y))
-        {
-            glfwSetWindowShouldClose(glfwGetCurrentContext(), true);
-        }
+        fun(rectangles[i]);
     }
 }
